@@ -1,6 +1,7 @@
 module HSynth where
 
 import Data.WAVE
+import qualified Data.Vector as V
 --import Data.Int (Int32)
 
 type Octave = Int
@@ -9,14 +10,15 @@ type Volume = Double
 type Duration = Double
 type Sound = [Double]
 data TimeSig = TimeSig Int Duration -- Notes per measure, length of a measure in seconds
-data Chord = Chord [Note] Volume Int | Rest Int
+data Chord = Chord [Note] Int | Rest Int
 
 data Envelope = ADSR Duration Duration Volume Duration
 type Oscillator = Volume -> Note -> Sound
 data Patch = Patch Oscillator Volume Envelope
 
-data Note = Note NoteName Octave
+data Note = NoteLetter NoteName Octave | NoteNumber NoteNum Octave deriving (Show)
 
+type NoteNum = Int
 data NoteName = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
   deriving (Show)
 
@@ -46,10 +48,23 @@ sampleEnv = ADSR 0.05 0.05 0.75 0.05
 samplePatch = Patch sinOsc 1 sampleEnv
 
 getFreq :: Note -> Frequency
-getFreq (Note note octave) = 440 * a ** n
+getFreq (NoteLetter note octave) = getFreq (NoteNumber (noteNum note) octave)
+getFreq (NoteNumber notenum octave) = 440 * a ** n
   where
-    a = 2**(1/12)
-    n = (fromIntegral octave - 4) * 12 + (fromIntegral (noteNum note - noteNum A))
+    a = 2 ** (1/12)
+    n = (fromIntegral octave - 4) * 12 + (fromIntegral (notenum - noteNum A))
+
+-- noteOffset takes a note and a number of semitones and returns the note that many semitones away
+noteOffset :: Note -> Int -> Note
+noteOffset (NoteLetter note octave) semitones = noteOffset (NoteNumber (noteNum note) octave) semitones
+noteOffset (NoteNumber notenum octave) semitones = NoteNumber ((notenum + semitones - 1) `mod` 12 + 1) (octave + (notenum + semitones - 1) `div` 12)
+
+majorChord :: Note -> [Note]
+majorChord (NoteLetter note octave) = majorChord (NoteNumber (noteNum note) octave)
+majorChord mainNote = [mainNote, majorThird, minorThird]
+  where
+    majorThird = noteOffset mainNote 4
+    minorThird = noteOffset majorThird 3
 
 sampleRate = 44100 :: Int    -- Frames/second
 dSampleRate = fromIntegral sampleRate
@@ -90,15 +105,14 @@ synth (Patch osc vol env) dur note = envelope env dur rawOsc
   where
     rawOsc = osc vol note
 
--- TODO: Make shiftSynth care about the chord vol
 play :: Duration -> Patch -> [Chord] -> Sound
 play noteDur patch chords = buildSignal silence 0 0 chords
   where
     buildSignal :: Sound -> Int -> Int -> [Chord] -> Sound
     buildSignal signal i nCount [] = take (round $ fromIntegral nCount * noteDur * dSampleRate) signal
-    buildSignal signal i nCount (chord@(Chord _ _ len):xs) = buildSignal (zipWith (+) signal (shiftSynth chord i)) (i+1) (max nCount (i+len)) xs
+    buildSignal signal i nCount (chord@(Chord _ len):xs) = buildSignal (zipWith (+) signal (shiftSynth chord i)) (i+1) (max nCount (i+len)) xs
     buildSignal signal i nCount ((Rest len):xs) = buildSignal signal (i+nCount) nCount xs
-    shiftSynth (Chord notes vol len) i = concat [take (round $ fromIntegral i*dSampleRate*noteDur) silence, foldr1 (zipWith (+)) $ map (synth patch noteDur) notes, silence]
+    shiftSynth (Chord notes len) i = concat [take (round $ fromIntegral i*dSampleRate*noteDur) silence, foldr1 (zipWith (+)) $ map (synth patch noteDur) notes, silence]
     silence = repeat 0
 
 saveWav :: Sound -> String -> IO ()
