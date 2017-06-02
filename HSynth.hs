@@ -42,7 +42,7 @@ noteNum B = 12
 instance Eq NoteName where
   a == b = noteNum a == noteNum b
 
-sampleEnv = ADSR 0.1 0.1 0.75 0.1
+sampleEnv = ADSR 0.05 0.05 0.75 0.05
 samplePatch = Patch sinOsc 1 sampleEnv
 
 getFreq :: Note -> Frequency
@@ -85,16 +85,21 @@ logScale :: Double -> Double
 logScale x = (exp x - 1)/(exp 1 - 1)
 
 synth :: Patch -> Duration -> Note -> Sound
+--synth _ _ _ = sinOsc 0.15 (Note A 4)
 synth (Patch osc vol env) dur note = envelope env dur rawOsc
   where
     rawOsc = osc vol note
 
---play :: TimeSig -> Patch -> [Chord] -> Sound
---play (TimeSig count dur) (Patch oscillator volume envelope) chords = buildSignal (repeat 0) 0 0 chords
---  where
---    buildSignal signal i dur ((Chord notes vol len):xs) = buildSignal (signal + synth ) (i+1) (max dur (i+len)) xs
---    buildSignal signal i dur ((Rest len):xs) = buildSignal signal (i+dur) dur xs
---    signalPart = 
+-- TODO: Make shiftSynth care about the chord vol
+play :: Duration -> Patch -> [Chord] -> Sound
+play noteDur patch chords = buildSignal silence 0 0 chords
+  where
+    buildSignal :: Sound -> Int -> Int -> [Chord] -> Sound
+    buildSignal signal i nCount [] = take (round $ fromIntegral nCount * noteDur * dSampleRate) signal
+    buildSignal signal i nCount (chord@(Chord _ _ len):xs) = buildSignal (zipWith (+) signal (shiftSynth chord i)) (i+1) (max nCount (i+len)) xs
+    buildSignal signal i nCount ((Rest len):xs) = buildSignal signal (i+nCount) nCount xs
+    shiftSynth (Chord notes vol len) i = concat [take (round $ fromIntegral i*dSampleRate*noteDur) silence, foldr1 (zipWith (+)) $ map (synth patch noteDur) notes, silence]
+    silence = repeat 0
 
 saveWav :: Sound -> String -> IO ()
 saveWav stream filename = putWAVEFile filename wav
