@@ -8,11 +8,19 @@ type Frequency = Double
 type Volume = Double
 type Duration = Double
 type Sound = [Double]
+data TimeSig = TimeSig Int Duration -- Notes per measure, length of a measure in seconds
+data Chord = Chord [Note] Volume Int | Rest Int
 
-data Note = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
+data Envelope = ADSR Duration Duration Volume Duration
+type Oscillator = Volume -> Note -> Sound
+data Patch = Patch Oscillator Volume Envelope
+
+data Note = Note NoteName Octave
+
+data NoteName = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
   deriving (Show)
 
-noteNum :: Note -> Int
+noteNum :: NoteName -> Int
 noteNum C = 1
 noteNum Cs = 2
 noteNum Df = 2
@@ -31,20 +39,24 @@ noteNum As = 11
 noteNum Bf = 11
 noteNum B = 12
 
-instance Eq Note where
+instance Eq NoteName where
   a == b = noteNum a == noteNum b
-  
-getFreq :: Note -> Octave -> Frequency
-getFreq note octave = 440 * a ** n
+
+sampleEnv = ADSR 0.1 0.1 0.75 0.1
+samplePatch = Patch sinOsc 1 sampleEnv
+
+getFreq :: Note -> Frequency
+getFreq (Note note octave) = 440 * a ** n
   where
     a = 2**(1/12)
     n = (fromIntegral octave - 4) * 12 + (fromIntegral (noteNum note - noteNum A))
 
 sampleRate = 44100 :: Int    -- Frames/second
+dSampleRate = fromIntegral sampleRate
 header = WAVEHeader 1 sampleRate 32 Nothing
 
 baseSin :: Frequency -> Sound
-baseSin freq = map sin [0.0, (freq*2*pi/(fromIntegral sampleRate))..]
+baseSin freq = map sin [0.0, (freq*2*pi/(dSampleRate))..]
 
 packSignal :: Sound -> WAVESamples
 packSignal xs = map ((:[]) . round . (* (2^31-1))) xs
@@ -56,13 +68,42 @@ clipSignal :: Volume -> Sound -> Sound
 clipSignal rawCutoff = map (\x -> if (abs x) > cutoff then signum x * cutoff else x)
   where cutoff = abs(rawCutoff)
 
+-- TODO: address cases where dur is shorter than attack + decay
+envelope :: Envelope -> Duration -> Sound -> Sound
+envelope (ADSR a d s r) rawDur rawSound = zipWith (*) rawSound env
+  where
+    dur = rawDur - a - d
+    env = concat [attack, decay, sustain, release]
+    attack = map (logScale . (\x -> x/(a*dSampleRate))) [1..a * dSampleRate]
+    decay = map (logScale . (\x -> (fullDecaySamples - x)/fullDecaySamples)) [1..d * dSampleRate]
+    fullDecaySamples = d/(1-s) * dSampleRate
+    sustain = take (round $ dSampleRate * dur) (repeat (logScale s))
+    -- TODO: implement the release part of this
+    release = map (logScale . (\x -> -s/(r*dSampleRate)*x+s)) [1..r * dSampleRate]
+
+logScale :: Double -> Double
+logScale x = (exp x - 1)/(exp 1 - 1)
+
+synth :: Patch -> Duration -> Note -> Sound
+synth (Patch osc vol env) dur note = envelope env dur rawOsc
+  where
+    rawOsc = osc vol note
+
+--play :: TimeSig -> Patch -> [Chord] -> Sound
+--play (TimeSig count dur) (Patch oscillator volume envelope) chords = buildSignal (repeat 0) 0 0 chords
+--  where
+--    buildSignal signal i dur ((Chord notes vol len):xs) = buildSignal (signal + synth ) (i+1) (max dur (i+len)) xs
+--    buildSignal signal i dur ((Rest len):xs) = buildSignal signal (i+dur) dur xs
+--    signalPart = 
+
 saveWav :: Sound -> String -> IO ()
 saveWav stream filename = putWAVEFile filename wav
   where
     samples = packSignal stream
     wav = WAVE header samples
 
---sinOsc :: Frequency -> Volume -> Duration -> WAVESamples
---sinOsc freq vol dur = map sin [0.0, (freq*2*pi/(fromIntegral sampleRate))..]
---  where
---    clip level xs = map (\x -> if abs x > level then signum x * level else x)
+-- TODO: make this actually care about the specified volume
+sinOsc :: Volume -> Note -> Sound
+sinOsc vol note = map ((logScale vol *) . sin) [0.0, (freq*2*pi/(fromIntegral sampleRate))..]
+  where
+    freq = getFreq note
