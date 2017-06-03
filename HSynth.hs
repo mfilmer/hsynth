@@ -173,21 +173,40 @@ rawSilence = repeat 0
 silence :: Duration -> Sound
 silence dur = V.replicate (getSampleCount dur) 0
 
+makeBasicOsc :: (Double -> Double) -> Oscillator
+makeBasicOsc fn = osc
+  where
+    osc freq = map fn $ [0, (freq/dSampleRate)..]
+
 basicSin :: Oscillator
-basicSin freq = map sin $ [0, (freq*2*pi/dSampleRate)..]
+basicSin = makeBasicOsc (\x -> sin (2*pi*x))
+--basicSin freq = map sin $ [0, (freq*2*pi/dSampleRate)..]
 
 basicSquare :: Oscillator
-basicSquare freq = map squ $ [0, (freq/dSampleRate)..]
+basicSquare = makeBasicOsc squ
+--basicSquare freq = map squ $ [0, (freq/dSampleRate)..]
 
 basicSawtooth :: Oscillator
-basicSawtooth freq = map saw $ [0, (freq/dSampleRate)..]
+basicSawtooth = makeBasicOsc saw
+--basicSawtooth freq = map saw $ [0, (freq/dSampleRate)..]
 
 basicTriangle :: Oscillator
 basicTriangle = undefined
 
 -- Voltage controlled oscillators
-vcoSin :: Sound -> Oscillator
-vcoSin = undefined
+makeVcoOsc :: (Double -> Double) -> (RawSound -> Oscillator)
+makeVcoOsc fn = vcoFn
+  where
+    vcoFn m = vco
+      where
+        vco freq = map fn $ [freq/dSampleRate * (t + intm) | (t, intm) <- zip [0..] (integrate m)]
+
+vcoSin :: RawSound -> Oscillator
+vcoSin = makeVcoOsc (\x -> sin(2*pi*x))
+
+vcoSquare :: RawSound -> Oscillator
+vcoSquare = makeVcoOsc squ
+
 
 -- Filters
 lowpassFilter :: Frequency -> Sound -> Sound
@@ -217,3 +236,6 @@ logScale x = (exp x - 1)/(exp 1 - 1)
 
 getSampleCount :: Duration -> Int
 getSampleCount = round . (* dSampleRate)
+
+integrate :: [Double] -> [Double]
+integrate = scanl1 (+)
