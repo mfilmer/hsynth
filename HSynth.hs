@@ -2,127 +2,163 @@ module HSynth where
 
 import Data.WAVE
 import qualified Data.Vector as V
---import Data.Int (Int32)
+import Data.Int (Int8)
 
-type Octave = Int
+-- Notes
+data NoteSym = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
+  deriving (Show)
+type KeySig = [NoteSym]
+
+type NoteNum = Int8
+type Octave = Int8
+data Note = Note NoteNum Octave
+type Chord = [Note]
+
+-- Synthesizer
 type Frequency = Double
 type Volume = Double
 type Duration = Double
-type Sound = [Double]
-data TimeSig = TimeSig Int Duration -- Notes per measure, length of a measure in seconds
-data Chord = Chord [Note] Int | Rest Int
-
+type RawSound = [Double]
+type Sound = V.Vector Double
+type Oscillator = Frequency -> RawSound
 data Envelope = ADSR Duration Duration Volume Duration
-type Oscillator = Volume -> Note -> Sound
-data Patch = Patch Oscillator Volume Envelope
+data Patch = Patch Oscillator Envelope Volume
+type Synth = Note -> Duration -> Sound
+data Playable = Playable Chord Duration
 
-data Note = NoteLetter NoteName Octave | NoteNumber NoteNum Octave deriving (Show)
+-- Sequencer
+type NBeats = Int8
+data Beat = Beat Chord NBeats
+type Sequence = [Beat]
 
-type NoteNum = Int
-data NoteName = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
-  deriving (Show)
+-- Sample Rate
+sampleRate = 44100
+dSampleRate = fromIntegral sampleRate
 
-noteNum :: NoteName -> Int
-noteNum C = 1
-noteNum Cs = 2
-noteNum Df = 2
-noteNum D = 3
-noteNum Ds = 4
-noteNum Ef = 4
-noteNum E = 5
-noteNum F = 6
-noteNum Fs = 7
-noteNum Gf = 7
-noteNum G = 8
-noteNum Gs = 9
-noteNum Af = 9
-noteNum A = 10
-noteNum As = 11
-noteNum Bf = 11
-noteNum B = 12
+getNoteNum :: NoteSym -> NoteNum
+getNoteNum C = 1
+getNoteNum Cs = 2
+getNoteNum Df = 2
+getNoteNum D = 3
+getNoteNum Ds = 4
+getNoteNum Ef = 4
+getNoteNum E = 5
+getNoteNum F = 6
+getNoteNum Fs = 7
+getNoteNum Gf = 7
+getNoteNum G = 8
+getNoteNum Gs = 9
+getNoteNum Af = 9
+getNoteNum A = 10
+getNoteNum As = 11
+getNoteNum Bf = 11
+getNoteNum B = 12
 
-instance Eq NoteName where
-  a == b = noteNum a == noteNum b
-
-sampleEnv = ADSR 0.05 0.05 0.75 0.05
-samplePatch = Patch sinOsc 1 sampleEnv
+getNote :: NoteSym -> Octave -> Note
+getNote noteSym octave = Note (getNoteNum noteSym) octave
 
 getFreq :: Note -> Frequency
-getFreq (NoteLetter note octave) = getFreq (NoteNumber (noteNum note) octave)
-getFreq (NoteNumber notenum octave) = 440 * a ** n
+getFreq (Note noteNum octave) = 440 * (2 ** (1/12)) ** n
   where
-    a = 2 ** (1/12)
-    n = (fromIntegral octave - 4) * 12 + (fromIntegral (notenum - noteNum A))
+    n = (fromIntegral octave - 4) * 12 + (fromIntegral (noteNum - getNoteNum A))
 
--- noteOffset takes a note and a number of semitones and returns the note that many semitones away
-noteOffset :: Note -> Int -> Note
-noteOffset (NoteLetter note octave) semitones = noteOffset (NoteNumber (noteNum note) octave) semitones
-noteOffset (NoteNumber notenum octave) semitones = NoteNumber ((notenum + semitones - 1) `mod` 12 + 1) (octave + (notenum + semitones - 1) `div` 12)
-
-majorChord :: Note -> [Note]
-majorChord (NoteLetter note octave) = majorChord (NoteNumber (noteNum note) octave)
-majorChord mainNote = [mainNote, majorThird, minorThird]
+buildSynth :: Patch -> Synth
+buildSynth (Patch osc env vol) = synth
   where
-    majorThird = noteOffset mainNote 4
-    minorThird = noteOffset majorThird 3
+    synth note duration = applyEnvelope env duration (osc $ getFreq note)
 
-sampleRate = 44100 :: Int    -- Frames/second
-dSampleRate = fromIntegral sampleRate
-header = WAVEHeader 1 sampleRate 32 Nothing
+-- Note modification functions
+noteOffset :: Note -> Int8 -> Note
+noteOffset (Note notenum octave) semitones = Note ((notenum + semitones - 1) `mod` 12 + 1) (octave + (notenum + semitones - 1) `div` 12)
 
-baseSin :: Frequency -> Sound
-baseSin freq = map sin [0.0, (freq*2*pi/(dSampleRate))..]
+majorChord :: Note -> Chord
+majorChord = undefined
 
-packSignal :: Sound -> WAVESamples
-packSignal xs = map ((:[]) . round . (* (2^31-1))) xs
+applyKeySig :: KeySig -> Chord -> Chord
+applyKeySig = undefined
 
-clipUnity :: Sound -> Sound
-clipUnity = clipSignal 1
-
-clipSignal :: Volume -> Sound -> Sound
-clipSignal rawCutoff = map (\x -> if (abs x) > cutoff then signum x * cutoff else x)
-  where cutoff = abs(rawCutoff)
-
--- TODO: address cases where dur is shorter than attack + decay
-envelope :: Envelope -> Duration -> Sound -> Sound
-envelope (ADSR a d s r) rawDur rawSound = zipWith (*) rawSound env
+-- Generate sounds
+applyEnvelope :: Envelope -> Duration -> RawSound -> Sound
+applyEnvelope (ADSR a d s r) rawDur rawSound = V.zipWith (*) (V.fromList $ take nSamples rawSound) env
   where
     dur = rawDur - a - d
-    env = concat [attack, decay, sustain, release]
-    attack = map (logScale . (\x -> x/(a*dSampleRate))) [1..a * dSampleRate]
-    decay = map (logScale . (\x -> (fullDecaySamples - x)/fullDecaySamples)) [1..d * dSampleRate]
-    fullDecaySamples = d/(1-s) * dSampleRate
-    sustain = take (round $ dSampleRate * dur) (repeat (logScale s))
-    -- TODO: implement the release part of this
-    release = map (logScale . (\x -> -s/(r*dSampleRate)*x+s)) [1..r * dSampleRate]
+    decayRate = (1-s)/(d*dSampleRate)
+    nSamples = round $ (rawDur + r) * dSampleRate
+    env = V.concat [attack, decay, sustain, release]
+    attack = V.generate (round $ a*dSampleRate) (logScale . (\x -> fromIntegral x/(a*dSampleRate)))
+    decay = V.generate (round $ d*dSampleRate) (logScale . (\x -> -decayRate*fromIntegral x + 1))
+    sustain = V.replicate (round $ dSampleRate * dur) (logScale s)
+    release = V.generate (round $ r*dSampleRate) (logScale . (\x -> -s/(r*dSampleRate)*fromIntegral x+s))
 
-logScale :: Double -> Double
-logScale x = (exp x - 1)/(exp 1 - 1)
-
-synth :: Patch -> Duration -> Note -> Sound
---synth _ _ _ = sinOsc 0.15 (Note A 4)
-synth (Patch osc vol env) dur note = envelope env dur rawOsc
+play :: Synth -> Playable -> Sound
+play synth (Playable chord duration) = mix sounds
   where
-    rawOsc = osc vol note
+    sounds = map (\note -> playNote synth note duration) chord
 
-play :: Duration -> Patch -> [Chord] -> Sound
-play noteDur patch chords = buildSignal silence 0 0 chords
+playAll :: Synth -> [Playable] -> Sound
+playAll synth playables = mix sounds
   where
-    buildSignal :: Sound -> Int -> Int -> [Chord] -> Sound
-    buildSignal signal i nCount [] = take (round $ fromIntegral nCount * noteDur * dSampleRate) signal
-    buildSignal signal i nCount (chord@(Chord _ len):xs) = buildSignal (zipWith (+) signal (shiftSynth chord i)) (i+1) (max nCount (i+len)) xs
-    buildSignal signal i nCount ((Rest len):xs) = buildSignal signal (i+nCount) nCount xs
-    shiftSynth (Chord notes len) i = concat [take (round $ fromIntegral i*dSampleRate*noteDur) silence, foldr1 (zipWith (+)) $ map (synth patch noteDur) notes, silence]
-    silence = repeat 0
+    sounds = map (play synth) playables
+
+playNote :: Synth -> Note -> Duration -> Sound
+playNote synth note duration = synth note duration
+
+playChord :: Synth -> Chord -> Duration -> Sound
+playChord synth chord duration = play synth (Playable chord duration)
+
+playBeat :: Synth -> Beat -> Duration -> Sound
+playBeat synth (Beat chord nbeats) duration = play synth (Playable chord $ duration * fromIntegral nbeats)
+
+playSequence :: Synth -> Sequence -> Duration -> Sound
+playSequence = undefined
+
+-- Mix sounds
+mix :: [Sound] -> Sound
+mix = foldr1 (V.zipWith (+))
+
+-- Sequencer
+arpegio :: Chord -> Duration -> Sequence
+arpegio = undefined
+
+-- Basic oscillators
+basicSin :: Oscillator
+basicSin freq = map sin $ [0.0, (freq*2*pi/(dSampleRate))..]
+
+basicSquare :: Oscillator
+basicSquare = undefined
+
+basicSawtooth :: Oscillator
+basicSawtooth = undefined
+
+basicTriangle :: Oscillator
+basicTriangle = undefined
+
+-- Voltage controlled oscillators
+vcoSin :: Sound -> Oscillator
+vcoSin = undefined
+
+-- Filters
+lowpassFilter :: Frequency -> Sound -> Sound
+lowpassFilter = undefined
+
+highpassFilter :: Frequency -> Sound -> Sound
+highpassFilter = undefined
+
+bandpassFilter :: (Frequency, Frequency) -> Sound -> Sound
+bandpassFilter (low, high) sound = highpassFilter low $ lowpassFilter high sound
+
+-- File writing
+waveFileHeader = WAVEHeader 1 sampleRate 32 Nothing
+
+packSignal :: Sound -> WAVESamples
+packSignal xs = V.toList $ V.map ((:[]) . round . (* (2^31-1))) xs
 
 saveWav :: Sound -> String -> IO ()
 saveWav stream filename = putWAVEFile filename wav
   where
     samples = packSignal stream
-    wav = WAVE header samples
+    wav = WAVE waveFileHeader samples
 
--- TODO: make this actually care about the specified volume
-sinOsc :: Volume -> Note -> Sound
-sinOsc vol note = map ((logScale vol *) . sin) [0.0, (freq*2*pi/(fromIntegral sampleRate))..]
-  where
-    freq = getFreq note
+-- Helper functions
+logScale :: Double -> Double
+logScale x = (exp x - 1)/(exp 1 - 1)
