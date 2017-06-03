@@ -72,7 +72,10 @@ noteOffset :: Note -> Int8 -> Note
 noteOffset (Note notenum octave) semitones = Note ((notenum + semitones) `mod` 12) (octave + (notenum + semitones) `div` 12)
 
 majorChord :: Note -> Chord
-majorChord = undefined
+majorChord baseNote = [baseNote, majorThird, minorThird]
+  where
+    majorThird = noteOffset baseNote 4
+    minorThird = noteOffset majorThird 3
 
 applyKeySig :: KeySig -> Chord -> Chord
 applyKeySig = undefined
@@ -91,12 +94,12 @@ applyEnvelope (ADSR a d s r) rawDur rawSound = V.zipWith (*) (V.fromList $ take 
     release = V.generate (getSampleCount r) (logScale . (\x -> -s/(r*dSampleRate)*fromIntegral x+s))
 
 play :: Synth -> Playable -> Sound
-play synth (Playable chord duration) = mix sounds
+play synth (Playable chord duration) = mixAll sounds
   where
     sounds = map (\note -> playNote synth note duration) chord
 
 playAll :: Synth -> [Playable] -> Sound
-playAll synth playables = mix sounds
+playAll synth playables = mixAll sounds
   where
     sounds = map (play synth) playables
 
@@ -109,12 +112,30 @@ playChord synth chord duration = play synth (Playable chord duration)
 playBeat :: Synth -> Beat -> Duration -> Sound
 playBeat synth (Beat chord nbeats) duration = play synth (Playable chord $ duration * fromIntegral nbeats)
 
+sequenceBeatCount :: Sequence -> NBeats
+sequenceBeatCount = foldr (\(Beat _ newBeats) oldBeats -> newBeats + oldBeats) 0
+
 playSequence :: Synth -> Sequence -> Duration -> Sound
-playSequence = undefined
+playSequence synth beats dur = mixAll $ map playSeq $ zip [0..] beats
+  where
+    playSeq (i, beat) = silence (i*dur) V.++ playBeat synth beat dur
+    
 
 -- Mix sounds
-mix :: [Sound] -> Sound
-mix = foldr1 (V.zipWith (+))
+mix :: Sound -> Sound -> Sound
+mix a b = V.zipWith (+) a b V.++ extra
+  where
+    lenA = length a
+    lenB = length b
+    minLen = min lenA lenB
+    maxLen = max lenA lenB
+    extra = case signum (lenA - lenB) of
+      0 -> V.empty
+      -1 -> V.slice minLen (maxLen - minLen) b
+      1 -> V.slice minLen (maxLen - minLen) a
+
+mixAll :: [Sound] -> Sound
+mixAll = foldr1 mix
 
 -- Sequencer
 arpegio :: Chord -> Duration -> Sequence

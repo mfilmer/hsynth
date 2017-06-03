@@ -1,20 +1,22 @@
 import HSynth
+import qualified Data.Vector as V
 
-toChord :: NoteName -> Chord
-toChord note = Chord (majorChord (NoteLetter note 4)) 1
+toBeat :: NoteSym -> Beat
+toBeat note = Beat (majorChord (Note (getNoteNum note) 4)) 1
 
 maryNotes = [E, D, C, D, E, E, E, D, D, D, E, G, G, E, D, C, D, E, E, E, E, D, D, E, D, C]
 
 maryEnv = ADSR 0.05 0.05 0.75 0.1
-maryPatch = Patch sinOsc 1 maryEnv
+maryPatch = Patch basicSin maryEnv 1
+marySynth = buildSynth maryPatch
 
-maryChords = map toChord maryNotes
+maryBeats = map toBeat maryNotes
 
-marySound = play 0.25 maryPatch maryChords
+marySound = playSequence marySynth maryBeats 0.25
 
-normMarySound = map (/ maxLevel) marySound
+normMarySound = V.map (/ maxLevel) marySound
   where
-    maxLevel = maximum (map abs marySound)
+    maxLevel = V.maximum (V.map abs marySound)
 
 saveMary = saveWav normMarySound "mary.wav"
 
