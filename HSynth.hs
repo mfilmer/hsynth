@@ -11,7 +11,7 @@ type KeySig = [NoteSym]
 
 type NoteNum = Int8
 type Octave = Int8
-data Note = Note NoteNum Octave
+data Note = Note NoteNum Octave deriving (Show)
 type Chord = [Note]
 
 -- Synthesizer
@@ -36,23 +36,23 @@ sampleRate = 44100
 dSampleRate = fromIntegral sampleRate
 
 getNoteNum :: NoteSym -> NoteNum
-getNoteNum C = 1
-getNoteNum Cs = 2
-getNoteNum Df = 2
-getNoteNum D = 3
-getNoteNum Ds = 4
-getNoteNum Ef = 4
-getNoteNum E = 5
-getNoteNum F = 6
-getNoteNum Fs = 7
-getNoteNum Gf = 7
-getNoteNum G = 8
-getNoteNum Gs = 9
-getNoteNum Af = 9
-getNoteNum A = 10
-getNoteNum As = 11
-getNoteNum Bf = 11
-getNoteNum B = 12
+getNoteNum C = 0
+getNoteNum Cs = 1
+getNoteNum Df = 1
+getNoteNum D = 2
+getNoteNum Ds = 3
+getNoteNum Ef = 3
+getNoteNum E = 4
+getNoteNum F = 5
+getNoteNum Fs = 6
+getNoteNum Gf = 6
+getNoteNum G = 7
+getNoteNum Gs = 8
+getNoteNum Af = 8
+getNoteNum A = 9
+getNoteNum As = 10
+getNoteNum Bf = 10
+getNoteNum B = 11
 
 getNote :: NoteSym -> Octave -> Note
 getNote noteSym octave = Note (getNoteNum noteSym) octave
@@ -69,7 +69,7 @@ buildSynth (Patch osc env vol) = synth
 
 -- Note modification functions
 noteOffset :: Note -> Int8 -> Note
-noteOffset (Note notenum octave) semitones = Note ((notenum + semitones - 1) `mod` 12 + 1) (octave + (notenum + semitones - 1) `div` 12)
+noteOffset (Note notenum octave) semitones = Note ((notenum + semitones) `mod` 12) (octave + (notenum + semitones) `div` 12)
 
 majorChord :: Note -> Chord
 majorChord = undefined
@@ -83,12 +83,12 @@ applyEnvelope (ADSR a d s r) rawDur rawSound = V.zipWith (*) (V.fromList $ take 
   where
     dur = rawDur - a - d
     decayRate = (1-s)/(d*dSampleRate)
-    nSamples = round $ (rawDur + r) * dSampleRate
+    nSamples = getSampleCount (rawDur + r)
     env = V.concat [attack, decay, sustain, release]
-    attack = V.generate (round $ a*dSampleRate) (logScale . (\x -> fromIntegral x/(a*dSampleRate)))
-    decay = V.generate (round $ d*dSampleRate) (logScale . (\x -> -decayRate*fromIntegral x + 1))
-    sustain = V.replicate (round $ dSampleRate * dur) (logScale s)
-    release = V.generate (round $ r*dSampleRate) (logScale . (\x -> -s/(r*dSampleRate)*fromIntegral x+s))
+    attack = V.generate (getSampleCount a) (logScale . (\x -> fromIntegral x/(a*dSampleRate)))
+    decay = V.generate (getSampleCount d) (logScale . (\x -> -decayRate*fromIntegral x + 1))
+    sustain = V.replicate (getSampleCount dur) (logScale s)
+    release = V.generate (getSampleCount r) (logScale . (\x -> -s/(r*dSampleRate)*fromIntegral x+s))
 
 play :: Synth -> Playable -> Sound
 play synth (Playable chord duration) = mix sounds
@@ -120,15 +120,32 @@ mix = foldr1 (V.zipWith (+))
 arpegio :: Chord -> Duration -> Sequence
 arpegio = undefined
 
+-- Oscillator shape functions
+squ :: Double -> Double
+squ x = if decimals < 0.5 then -1 else 1
+  where
+    decimals = x - fromIntegral (floor x)
+
+saw :: Double -> Double
+saw x = if decimals < 0.5 then 2 * decimals else 2 * decimals - 2
+  where
+    decimals = x - fromIntegral (floor x)
+
 -- Basic oscillators
+rawSilence :: RawSound
+rawSilence = repeat 0
+
+silence :: Duration -> Sound
+silence dur = V.replicate (getSampleCount dur) 0
+
 basicSin :: Oscillator
-basicSin freq = map sin $ [0.0, (freq*2*pi/(dSampleRate))..]
+basicSin freq = map sin $ [0, (freq*2*pi/dSampleRate)..]
 
 basicSquare :: Oscillator
-basicSquare = undefined
+basicSquare freq = map squ $ [0, (freq/dSampleRate)..]
 
 basicSawtooth :: Oscillator
-basicSawtooth = undefined
+basicSawtooth freq = map saw $ [0, (freq/dSampleRate)..]
 
 basicTriangle :: Oscillator
 basicTriangle = undefined
@@ -162,3 +179,6 @@ saveWav stream filename = putWAVEFile filename wav
 -- Helper functions
 logScale :: Double -> Double
 logScale x = (exp x - 1)/(exp 1 - 1)
+
+getSampleCount :: Duration -> Int
+getSampleCount = round . (* dSampleRate)
