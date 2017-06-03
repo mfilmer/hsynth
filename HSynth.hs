@@ -3,6 +3,8 @@ module HSynth where
 import Data.WAVE
 import qualified Data.Vector as V
 import Data.Int (Int8)
+import Data.Hashable
+import qualified Data.Map.Strict as M
 
 -- Notes
 data NoteSym = C | Cs | Df | D | Ds | Ef | E | F | Fs | Gf| G | Gs | Af | A | As | Bf | B
@@ -13,6 +15,9 @@ type NoteNum = Int8
 type Octave = Int8
 data Note = Note NoteNum Octave deriving (Show)
 type Chord = [Note]
+
+instance Hashable Note where
+  hashWithSalt salt (Note noteNum octave) = hashWithSalt salt (noteNum, octave)
 
 -- Synthesizer
 type Frequency = Double
@@ -30,6 +35,9 @@ data Playable = Playable Chord Duration
 type NBeats = Int8
 data Beat = Beat Chord NBeats
 type Sequence = [Beat]
+
+instance Hashable Beat where
+  hashWithSalt salt (Beat chord nbeats) = hashWithSalt salt (chord, nbeats)
 
 -- Sample Rate
 sampleRate = 44100
@@ -115,10 +123,16 @@ playBeat synth (Beat chord nbeats) duration = play synth (Playable chord $ durat
 sequenceBeatCount :: Sequence -> NBeats
 sequenceBeatCount = foldr (\(Beat _ newBeats) oldBeats -> newBeats + oldBeats) 0
 
+-- Memoizes the synthesized beats for a performance improvement
 playSequence :: Synth -> Sequence -> Duration -> Sound
-playSequence synth beats dur = mixAll $ map playSeq $ zip [0..] beats
+playSequence synth beats dur = mixAll $ playSeq beats 0 M.empty
   where
-    playSeq (i, beat) = silence (i*dur) V.++ playBeat synth beat dur
+    playSeq [] _ _ = []
+    playSeq (beat:beats) i oldMap = (silence (i*dur) V.++ newBeat):playSeq beats (i+1) newMap
+      where
+        beatHash = hash beat
+        newBeat = M.findWithDefault (playBeat synth beat dur) beatHash oldMap
+        newMap = M.insert beatHash newBeat oldMap
     
 
 -- Mix sounds
