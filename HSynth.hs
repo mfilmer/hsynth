@@ -73,7 +73,7 @@ getFreq (Note noteNum octave) = 440 * (2 ** (1/12)) ** n
 buildSynth :: Patch -> Synth
 buildSynth (Patch osc env vol) = synth
   where
-    synth note duration = applyEnvelope env duration (osc $ getFreq note)
+    synth note duration = V.map (*vol) $ applyEnvelope env duration (osc $ getFreq note)
 
 -- Note modification functions
 noteOffset :: Note -> Int8 -> Note
@@ -118,10 +118,8 @@ playChord :: Synth -> Chord -> Duration -> Sound
 playChord synth chord duration = play synth (Playable chord duration)
 
 playBeat :: Synth -> Beat -> Duration -> Sound
+playBeat _ (Beat [] _) _ = V.empty
 playBeat synth (Beat chord nbeats) duration = play synth (Playable chord $ duration * fromIntegral nbeats)
-
-sequenceBeatCount :: Sequence -> NBeats
-sequenceBeatCount = foldr (\(Beat _ newBeats) oldBeats -> newBeats + oldBeats) 0
 
 -- Memoizes the synthesized beats for a performance improvement
 playSequence :: Synth -> Sequence -> Duration -> Sound
@@ -133,7 +131,10 @@ playSequence synth beats dur = mixAll $ playSeq beats 0 M.empty
         beatHash = hash beat
         newBeat = M.findWithDefault (playBeat synth beat dur) beatHash oldMap
         newMap = M.insert beatHash newBeat oldMap
-    
+
+
+-- Sequencer functions
+silentBeat = Beat [] 1
 
 -- Mix sounds
 mix :: Sound -> Sound -> Sound
@@ -207,6 +208,8 @@ vcoSin = makeVcoOsc (\x -> sin(2*pi*x))
 vcoSquare :: RawSound -> Oscillator
 vcoSquare = makeVcoOsc squ
 
+vcoSawtooth :: RawSound -> Oscillator
+vcoSawtooth = makeVcoOsc saw
 
 -- Filters
 lowpassFilter :: Frequency -> Sound -> Sound
